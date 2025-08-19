@@ -147,6 +147,62 @@
   )
 )
 
+;; Advanced auction system with comprehensive bid management and automatic settlement
+(define-public (create-auction-with-advanced-features 
+  (asset-id uint) 
+  (starting-price uint) 
+  (duration-blocks uint)
+  (reserve-price uint)
+  (buyout-price (optional uint)))
+  (let (
+    (listing (unwrap! (map-get? asset-listings { asset-id: asset-id }) ERR-ASSET-NOT-FOUND))
+    (end-block (+ block-height duration-blocks))
+    (existing-auction (map-get? auctions { asset-id: asset-id }))
+  )
+    ;; Validate auction parameters and ownership
+    (asserts! (> starting-price u0) ERR-INVALID-PRICE)
+    (asserts! (> duration-blocks u0) ERR-INVALID-PRICE)
+    (asserts! (>= reserve-price starting-price) ERR-INVALID-PRICE)
+    (try! (validate-asset-owner asset-id tx-sender))
+    (asserts! (is-none existing-auction) ERR-ALREADY-LISTED)
+    
+    ;; Validate buyout price if provided
+    (match buyout-price
+      some-buyout (asserts! (> some-buyout reserve-price) ERR-INVALID-PRICE)
+      true
+    )
+    
+    ;; Remove from direct sale listings
+    (map-set asset-listings
+      { asset-id: asset-id }
+      (merge listing { for-sale: false })
+    )
+    
+    ;; Create comprehensive auction entry
+    (map-set auctions
+      { asset-id: asset-id }
+      {
+        seller: tx-sender,
+        starting-price: starting-price,
+        current-bid: starting-price,
+        highest-bidder: none,
+        end-block: end-block,
+        active: true
+      }
+    )
+    
+    ;; Handle immediate buyout if buyout price matches starting price
+    (match buyout-price
+      some-buyout (if (is-eq some-buyout starting-price)
+                    (begin
+                      (try! (finalize-auction-sale asset-id tx-sender some-buyout))
+                      (ok { auction-created: true, immediate-sale: true }))
+                    (ok { auction-created: true, immediate-sale: false }))
+      (ok { auction-created: true, immediate-sale: false })
+    )
+  )
+)
+
 ;; Helper function for auction finalization
 (define-private (finalize-auction-sale (asset-id uint) (buyer principal) (final-price uint))
   (let (
